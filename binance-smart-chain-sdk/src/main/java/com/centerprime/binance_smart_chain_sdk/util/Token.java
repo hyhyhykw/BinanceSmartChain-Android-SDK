@@ -1,4 +1,4 @@
-package com.centerprime.binancesmartchainsdk.util;
+package com.centerprime.binance_smart_chain_sdk.util;
 
 public class Token {
     private String contractAddress;

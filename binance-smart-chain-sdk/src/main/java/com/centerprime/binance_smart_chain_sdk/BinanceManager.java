@@ -1,19 +1,19 @@
 package com.centerprime.binance_smart_chain_sdk;
 
 import android.content.Context;
-import android.os.Build;
-import android.provider.Settings;
 
 import com.centerprime.binance_smart_chain_sdk.util.BalanceUtils;
 import com.centerprime.binance_smart_chain_sdk.util.CenterPrimeUtils;
 import com.centerprime.binance_smart_chain_sdk.util.Const;
 import com.centerprime.binance_smart_chain_sdk.util.Erc20TokenWrapper;
-import com.centerprime.binance_smart_chain_sdk.util.HyperLedgerApi;
-import com.centerprime.binance_smart_chain_sdk.util.SubmitTransactionModel;
+import com.centerprime.binance_smart_chain_sdk.util.Token;
 import com.centerprime.binance_smart_chain_sdk.util.Wallet;
-import com.centerprime.binancesmartchainsdk.util.Token;
-import com.google.gson.Gson;
 
+import org.bitcoinj.crypto.ChildNumber;
+import org.bitcoinj.crypto.DeterministicKey;
+import org.bitcoinj.crypto.HDKeyDerivation;
+import org.bitcoinj.crypto.HDUtils;
+import org.bitcoinj.crypto.MnemonicCode;
 import org.spongycastle.util.encoders.Hex;
 import org.web3j.abi.datatypes.Address;
 import org.web3j.abi.datatypes.generated.Uint256;
@@ -30,7 +30,6 @@ import org.web3j.protocol.core.methods.response.EthGetTransactionCount;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.protocol.http.HttpService;
-import org.web3j.tx.ChainId;
 import org.web3j.tx.RawTransactionManager;
 import org.web3j.tx.TransactionManager;
 import org.web3j.tx.response.NoOpProcessor;
@@ -48,14 +47,9 @@ import java.math.BigInteger;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
-import java.util.HashMap;
+import java.util.List;
 
 import io.reactivex.Single;
-import io.reactivex.android.schedulers.AndroidSchedulers;
-import io.reactivex.schedulers.Schedulers;
-import retrofit2.Retrofit;
-import retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory;
-import retrofit2.converter.gson.GsonConverterFactory;
 
 /**
  * Created by CenterPrime on 2020/09/19.
@@ -68,11 +62,6 @@ public class BinanceManager {
      * Web3j Client
      */
     private Web3j web3j;
-
-    /**
-     * Hyperledger Api
-     */
-    private HyperLedgerApi hyperLedgerApi;
 
     /**
      * Infura node url
@@ -95,12 +84,6 @@ public class BinanceManager {
     public void init(String mainnetInfuraUrl) {
         this.mainnetInfuraUrl = mainnetInfuraUrl;
         web3j = Web3jFactory.build(new HttpService(mainnetInfuraUrl, false));
-        Retrofit retrofit = new Retrofit.Builder()
-                .baseUrl("http://34.231.96.72:8081")
-                .addConverterFactory(GsonConverterFactory.create())
-                .addCallAdapterFactory(RxJava2CallAdapterFactory.create())
-                .build();
-        hyperLedgerApi = retrofit.create(HyperLedgerApi.class);
     }
 
     /**
@@ -123,25 +106,16 @@ public class BinanceManager {
      */
     public Single<Wallet> createWallet(String password, Context context) {
         return Single.fromCallable(() -> {
-            HashMap<String, Object> body = new HashMap<>();
-            body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
             try {
 
                 String walletAddress = CenterPrimeUtils.generateNewWalletFile(password, new File(context.getFilesDir(), ""), false);
                 String walletPath = context.getFilesDir() + "/" + walletAddress.toLowerCase();
                 File keystoreFile = new File(walletPath);
                 String keystore = read_file(context, keystoreFile.getName());
-
-                body.put("action_type", "WALLET_CREATE");
-                body.put("wallet_address", walletAddress);
-                body.put("status", "SUCCESS");
-                sendEventToLedger(body, context);
                 return new Wallet(walletAddress, keystore);
             } catch (CipherException | IOException | NoSuchAlgorithmException | InvalidAlgorithmParameterException | NoSuchProviderException e) {
                 e.printStackTrace();
-                body.put("status", "FAILURE");
             }
-            sendEventToLedger(body, context);
             return null;
         });
     }
@@ -157,19 +131,10 @@ public class BinanceManager {
             }
             String walletPath = context.getFilesDir() + "/" + wallet.toLowerCase();
             File keystoreFile = new File(walletPath);
-            HashMap<String, Object> body = new HashMap<>();
-            body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
             if (keystoreFile.exists()) {
 
-                body.put("action_type", "WALLET_EXPORT_KEYSTORE");
-                body.put("wallet_address", walletAddress);
-                body.put("status", "SUCCESS");
-                sendEventToLedger(body, context);
                 return read_file(context, keystoreFile.getName());
             } else {
-                body.put("action_type", "WALLET_EXPORT_KEYSTORE");
-                body.put("wallet_address", walletAddress);
-                body.put("status", "FAILURE");
                 throw new Exception("Keystore is NULL");
             }
         });
@@ -199,54 +164,60 @@ public class BinanceManager {
      */
     public Single<String> importFromKeystore(String keystore, String password, Context context) {
         return Single.fromCallable(() -> {
-            HashMap<String, Object> body = new HashMap<>();
-            body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
             try {
                 Credentials credentials = CenterPrimeUtils.loadCredentials(password, keystore);
                 String walletAddress = CenterPrimeUtils.generateWalletFile(password, credentials.getEcKeyPair(), new File(context.getFilesDir(), ""), false);
 
-                body.put("action_type", "WALLET_IMPORT_KEYSTORE");
-                body.put("wallet_address", walletAddress);
-                body.put("status", "SUCCESS");
-                sendEventToLedger(body, context);
                 return walletAddress;
             } catch (IOException e) {
-                body.put("action_type", "WALLET_IMPORT_KEYSTORE");
-                body.put("status", "FAILURE");
-                sendEventToLedger(body, context);
                 e.printStackTrace();
             }
-            sendEventToLedger(body, context);
             return null;
         });
+    }
+
+    private static final String HD_PATH = "44H/714H/0H/0/0";
+
+    public static String getPrivateKeyFromMnemonicCode(List<String> words) {
+        byte[] seed = MnemonicCode.toSeed(words, "");
+        DeterministicKey key = HDKeyDerivation.createMasterPrivateKey(seed);
+
+        List<ChildNumber> childNumbers = HDUtils.parsePath(HD_PATH);
+        for (ChildNumber cn : childNumbers) {
+            key = HDKeyDerivation.deriveChildKey(key, cn);
+        }
+        return key.getPrivateKeyAsHex();
+    }
+
+
+    public Single<Wallet> importFromMnemonic(List<String> words,
+                                             String password,
+                                             Context context) {
+
+        String privateKey = getPrivateKeyFromMnemonicCode(words);
+
+        return importFromPrivateKey(privateKey,context,password);
     }
 
     /**
      * Import Wallet with Private Key
      */
-    public Single<String> importFromPrivateKey(String privateKey, Context context) {
+    public Single<Wallet> importFromPrivateKey(String privateKey, Context context, String password) {
         return Single.fromCallable(() -> {
-            HashMap<String, Object> body = new HashMap<>();
-            body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
-            String password = "BinanceSDK";
             // Decode private key
             ECKeyPair keys = ECKeyPair.create(Hex.decode(privateKey));
             try {
                 Credentials credentials = Credentials.create(keys);
                 String walletAddress = CenterPrimeUtils.generateWalletFile(password, credentials.getEcKeyPair(), new File(context.getFilesDir(), ""), false);
 
-                body.put("action_type", "WALLET_IMPORT_PRIVATE_KEY");
-                body.put("wallet_address", walletAddress);
-                body.put("status", "SUCCESS");
-                sendEventToLedger(body, context);
-                return walletAddress;
+                String walletPath = context.getFilesDir() + "/" + walletAddress.toLowerCase();
+                File keystoreFile = new File(walletPath);
+                String keystore = read_file(context, keystoreFile.getName());
+
+                return new Wallet(walletAddress, keystore);
             } catch (CipherException | IOException e) {
                 e.printStackTrace();
-                body.put("action_type", "WALLET_IMPORT_PRIVATE_KEY");
-                body.put("status", "FAILURE");
-                sendEventToLedger(body, context);
             }
-            sendEventToLedger(body, context);
             return null;
         });
     }
@@ -258,13 +229,6 @@ public class BinanceManager {
         return loadCredentials(walletAddress, password, context)
                 .flatMap(credentials -> {
                     String privateKey = credentials.getEcKeyPair().getPrivateKey().toString(16);
-
-                    HashMap<String, Object> body = new HashMap<>();
-                    body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
-                    body.put("action_type", "WALLET_EXPORT_PRIVATE_KEY");
-                    body.put("wallet_address", walletAddress);
-                    body.put("status", "SUCCESS");
-                    sendEventToLedger(body, context);
 
                     return Single.just(privateKey);
                 });
@@ -280,13 +244,6 @@ public class BinanceManager {
                     .ethGetBalance(address, DefaultBlockParameterName.LATEST)
                     .send()
                     .getBalance();
-            HashMap<String, Object> body = new HashMap<>();
-            body.put("action_type", "COIN_BALANCE");
-            body.put("wallet_address", address);
-            body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
-            body.put("balance", BalanceUtils.weiToEth(valueInWei));
-            body.put("status", "SUCCESS");
-            sendEventToLedger(body, context);
             return BalanceUtils.weiToEth(valueInWei);
         });
     }
@@ -344,22 +301,9 @@ public class BinanceManager {
                             transactionManager, BigInteger.ZERO, BigInteger.ZERO);
                     Address address = new Address(walletAddress);
                     BigInteger tokenBalance = contract.balanceOf(address).getValue();
-                    String tokenName = contract.name().getValue();
-                    String tokenSymbol = contract.symbol().getValue();
                     BigInteger decimalCount = contract.decimals().getValue();
 
                     BigDecimal tokenValueByDecimals = BalanceUtils.balanceByDecimal(tokenBalance, decimalCount);
-
-                    HashMap<String, Object> body = new HashMap<>();
-                    body.put("action_type", "TOKEN_BALANCE");
-                    body.put("wallet_address", walletAddress);
-                    body.put("token_smart_contract", tokenContractAddress);
-                    body.put("token_name", tokenName);
-                    body.put("token_symbol", tokenSymbol);
-                    body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
-                    body.put("balance", tokenValueByDecimals.doubleValue());
-                    body.put("status", "SUCCESS");
-                    sendEventToLedger(body, context);
 
                     return Single.just(tokenValueByDecimals);
                 });
@@ -389,20 +333,6 @@ public class BinanceManager {
 
                     String transactionHash = ethSendTransaction.getTransactionHash();
 
-                    HashMap<String, Object> body = new HashMap<>();
-                    body.put("action_type", "SEND_BNB");
-                    body.put("from_wallet_address", walletAddress);
-                    body.put("to_wallet_address", to_Address);
-                    body.put("amount", bnbAmount.toPlainString());
-                    body.put("tx_hash", transactionHash);
-                    body.put("gasLimit", gasLimit.toString());
-                    body.put("gasPrice", gasPrice.toString());
-                    body.put("fee", gasLimit.multiply(gasPrice).toString());
-                    body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
-                    body.put("status", "SUCCESS");
-                    sendEventToLedger(body, context);
-
-
                     return Single.just(transactionHash);
                 });
     }
@@ -424,31 +354,11 @@ public class BinanceManager {
                             web3j, credentials, isMainNet() ? (byte) 56 : (byte) 97, transactionReceiptProcessor);
                     Erc20TokenWrapper contract = Erc20TokenWrapper.load(tokenContractAddress, web3j, transactionManager, gasPrice, gasLimit);
 
-                    String tokenName = contract.name().getValue();
-                    String tokenSymbol = contract.symbol().getValue();
                     BigInteger decimalCount = contract.decimals().getValue();
 
                     BigDecimal formattedAmount = BalanceUtils.amountByDecimal(tokenAmount, new BigDecimal(decimalCount));
 
                     TransactionReceipt mReceipt = contract.transfer(new Address(to_Address), new Uint256(formattedAmount.toBigInteger()));
-
-                    HashMap<String, Object> body = new HashMap<>();
-                    body.put("action_type", "SEND_TOKEN");
-                    body.put("from_wallet_address", walletAddress);
-                    body.put("to_wallet_address", to_Address);
-                    body.put("amount", tokenAmount.toPlainString());
-                    body.put("tx_hash", mReceipt.getTransactionHash());
-                    body.put("gasLimit", gasLimit.toString());
-                    body.put("gasPrice", gasPrice.toString());
-                    body.put("fee", gasLimit.multiply(gasPrice).toString());
-                    body.put("network", isMainNet() ? "MAINNET" : "TESTNET");
-                    body.put("token_smart_contract", tokenContractAddress);
-
-                    body.put("token_name", tokenName);
-                    body.put("token_symbol", tokenSymbol);
-
-                    body.put("status", "SUCCESS");
-                    sendEventToLedger(body, context);
 
                     return Single.just(mReceipt.getTransactionHash());
                 });
@@ -477,50 +387,6 @@ public class BinanceManager {
         return sb.toString();
     }
 
-    private void sendEventToLedger(HashMap<String, Object> map, Context context) {
-        try {
-            SubmitTransactionModel submitTransactionModel = new SubmitTransactionModel();
-            submitTransactionModel.setTx_type("BINANCE");
-            submitTransactionModel.setUsername("user1");
-            submitTransactionModel.setOrgname("org1");
-
-            HashMap<String, Object> deviceInfo = deviceInfo(context);
-            if (deviceInfo != null) {
-                map.put("DEVICE_INFO", new Gson().toJson(deviceInfo));
-            }
-
-            submitTransactionModel.setBody(map);
-            hyperLedgerApi.submitTransaction(submitTransactionModel)
-                    .subscribeOn(Schedulers.io())
-                    .observeOn(AndroidSchedulers.mainThread())
-                    .subscribe((objectBaseResponse, throwable) -> {
-                        System.out.println(objectBaseResponse);
-                    });
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    private HashMap<String, Object> deviceInfo(Context context) {
-        try {
-            String androidId = Settings.Secure.getString(context.getContentResolver(),
-                    Settings.Secure.ANDROID_ID);
-            String osName = "ANDROID";
-            String serialNumber = Build.SERIAL;
-            String model = Build.MODEL;
-            String manufacturer = Build.MANUFACTURER;
-            HashMap<String, Object> deviceInfo = new HashMap<>();
-            deviceInfo.put("ID", androidId);
-            deviceInfo.put("OS", osName);
-            deviceInfo.put("MODEL", model);
-            deviceInfo.put("SERIAL", serialNumber);
-            deviceInfo.put("MANUFACTURER", manufacturer);
-            return deviceInfo;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
 
     private boolean isMainNet() {
         return mainnetInfuraUrl.equals("https://bsc-dataseed1.binance.org:443");
