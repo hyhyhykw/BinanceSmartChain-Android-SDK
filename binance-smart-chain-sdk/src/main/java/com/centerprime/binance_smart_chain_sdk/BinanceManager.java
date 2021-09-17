@@ -23,7 +23,6 @@ import org.web3j.crypto.ECKeyPair;
 import org.web3j.crypto.RawTransaction;
 import org.web3j.crypto.TransactionEncoder;
 import org.web3j.protocol.Web3j;
-import org.web3j.protocol.Web3jFactory;
 import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.response.EthGasPrice;
 import org.web3j.protocol.core.methods.response.EthGetTransactionCount;
@@ -83,7 +82,7 @@ public class BinanceManager {
      */
     public void init(String mainnetInfuraUrl) {
         this.mainnetInfuraUrl = mainnetInfuraUrl;
-        web3j = Web3jFactory.build(new HttpService(mainnetInfuraUrl, false));
+        web3j = Web3j.build(new HttpService(mainnetInfuraUrl, false));
     }
 
     /**
@@ -196,7 +195,7 @@ public class BinanceManager {
 
         String privateKey = getPrivateKeyFromMnemonicCode(words);
 
-        return importFromPrivateKey(privateKey,context,password);
+        return importFromPrivateKey(privateKey, context, password);
     }
 
     /**
